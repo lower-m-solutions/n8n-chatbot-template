@@ -177,6 +177,50 @@
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
         }
 
+        /* Loading indicator styles */
+        .n8n-chat-widget .chat-message.loading {
+            background: var(--chat--color-background);
+            border: 1px solid rgba(133, 79, 255, 0.2);
+            color: var(--chat--color-font);
+            align-self: flex-start;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+            padding: 12px 16px;
+        }
+
+        .n8n-chat-widget .typing-indicator {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .n8n-chat-widget .typing-indicator span {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--chat--color-primary);
+            opacity: 0.4;
+            animation: typing 1.4s infinite;
+        }
+
+        .n8n-chat-widget .typing-indicator span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .n8n-chat-widget .typing-indicator span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes typing {
+            0%, 60%, 100% {
+                opacity: 0.4;
+                transform: translateY(0);
+            }
+            30% {
+                opacity: 1;
+                transform: translateY(-8px);
+            }
+        }
+
         .n8n-chat-widget .chat-input {
             padding: 16px;
             background: var(--chat--color-background);
@@ -202,6 +246,11 @@
             opacity: 0.6;
         }
 
+        .n8n-chat-widget .chat-input textarea:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .n8n-chat-widget .chat-input button {
             background: linear-gradient(135deg, var(--chat--color-primary) 0%, var(--chat--color-secondary) 100%);
             color: white;
@@ -214,8 +263,13 @@
             font-weight: 500;
         }
 
-        .n8n-chat-widget .chat-input button:hover {
+        .n8n-chat-widget .chat-input button:hover:not(:disabled) {
             transform: scale(1.05);
+        }
+
+        .n8n-chat-widget .chat-input button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
 
         .n8n-chat-widget .chat-toggle {
@@ -322,6 +376,7 @@
     window.N8NChatWidgetInitialized = true;
 
     let currentSessionId = '';
+    let isWaitingForResponse = false;
 
     // Create widget container
     const widgetContainer = document.createElement('div');
@@ -395,6 +450,35 @@
         return crypto.randomUUID();
     }
 
+    function showLoadingIndicator() {
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'chat-message loading';
+        loadingDiv.id = 'loading-indicator';
+        loadingDiv.innerHTML = `
+            <div class="typing-indicator">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+        `;
+        messagesContainer.appendChild(loadingDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        return loadingDiv;
+    }
+
+    function removeLoadingIndicator() {
+        const loadingIndicator = document.getElementById('loading-indicator');
+        if (loadingIndicator) {
+            loadingIndicator.remove();
+        }
+    }
+
+    function setInputState(disabled) {
+        isWaitingForResponse = disabled;
+        textarea.disabled = disabled;
+        sendButton.disabled = disabled;
+    }
+
     async function startNewConversation() {
         currentSessionId = generateUUID();
         const data = [{
@@ -406,6 +490,9 @@
             }
         }];
 
+        setInputState(true);
+        const loadingIndicator = showLoadingIndicator();
+
         try {
             const response = await fetch(config.webhook.url, {
                 method: 'POST',
@@ -416,6 +503,9 @@
             });
 
             const responseData = await response.json();
+            
+            removeLoadingIndicator();
+            
             chatContainer.querySelector('.brand-header').style.display = 'none';
             chatContainer.querySelector('.new-conversation').style.display = 'none';
             chatInterface.classList.add('active');
@@ -427,6 +517,15 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         } catch (error) {
             console.error('Error:', error);
+            removeLoadingIndicator();
+            
+            const errorMessageDiv = document.createElement('div');
+            errorMessageDiv.className = 'chat-message bot';
+            errorMessageDiv.textContent = 'Sorry, there was an error connecting. Please try again.';
+            messagesContainer.appendChild(errorMessageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        } finally {
+            setInputState(false);
         }
     }
 
@@ -447,6 +546,9 @@
         messagesContainer.appendChild(userMessageDiv);
         messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
+        setInputState(true);
+        const loadingIndicator = showLoadingIndicator();
+
         try {
             const response = await fetch(config.webhook.url, {
                 method: 'POST',
@@ -458,6 +560,8 @@
             
             const data = await response.json();
             
+            removeLoadingIndicator();
+            
             const botMessageDiv = document.createElement('div');
             botMessageDiv.className = 'chat-message bot';
             botMessageDiv.textContent = Array.isArray(data) ? data[0].output : data.output;
@@ -465,12 +569,24 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         } catch (error) {
             console.error('Error:', error);
+            removeLoadingIndicator();
+            
+            const errorMessageDiv = document.createElement('div');
+            errorMessageDiv.className = 'chat-message bot';
+            errorMessageDiv.textContent = 'Sorry, there was an error sending your message. Please try again.';
+            messagesContainer.appendChild(errorMessageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        } finally {
+            setInputState(false);
+            textarea.focus();
         }
     }
 
     newChatBtn.addEventListener('click', startNewConversation);
     
     sendButton.addEventListener('click', () => {
+        if (isWaitingForResponse) return;
+        
         const message = textarea.value.trim();
         if (message) {
             sendMessage(message);
@@ -481,6 +597,9 @@
     textarea.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
+            
+            if (isWaitingForResponse) return;
+            
             const message = textarea.value.trim();
             if (message) {
                 sendMessage(message);
